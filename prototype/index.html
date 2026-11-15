@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Password Guessability Visualizer</title>
+<style>
+  :root {
+    --bg: #f6f6f3; --surface: #ffffff; --surface-2: #f0efea; --text: #1d1d1b; --muted: #66665f;
+    --border: #e1e0d9; --accent: #2f5bd3; --warn-bg: #fff4e0; --warn-text: #7a4b00;
+    --danger: #c62828; --ok: #2e7d32;
+    --track: linear-gradient(90deg, #c62828 0%, #ef6c00 30%, #f9a825 52%, #7cb342 76%, #2e7d32 100%);
+    --radius: 12px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141413; --surface: #1e1e1c; --surface-2: #2a2a27; --text: #ecebe6; --muted: #a3a29a;
+      --border: #34342f; --accent: #8ea8ff; --warn-bg: #3a2c12; --warn-text: #ffd27a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 4px 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 12px; font-weight: 600; }
+  .eyebrow { font-size: 13px; color: var(--muted); }
+  .lead { color: var(--muted); margin: 0 0 20px; max-width: 70ch; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+
+  /* Input */
+  .pw-row { display: flex; gap: 8px; }
+  #pw { flex: 1; min-width: 0; font: 20px/1.3 var(--mono); padding: 12px 14px; border-radius: 10px;
+        border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
+  #pw:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button, select { font: inherit; color: var(--text); }
+  .btn { border: 1px solid var(--border); background: var(--surface-2); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+  .btn:hover { border-color: var(--muted); }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+  .examples span { font-size: 13px; color: var(--muted); margin-right: 2px; }
+  .chip { font: 13px var(--mono); padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+          background: transparent; cursor: pointer; }
+  .chip:hover { background: var(--surface-2); }
+  .privacy { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+
+  /* Threat model */
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px 18px; }
+  .control label.title { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .seg { display: flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .seg button { flex: 1; border: 0; background: transparent; padding: 7px 8px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .seg button:disabled { cursor: not-allowed; opacity: 0.45; }
+  .control select { width: 100%; padding: 7px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); }
+  .control select:disabled { opacity: 0.45; }
+  .control .hint { font-size: 12px; color: var(--muted); margin-top: 4px; min-height: 1em; }
+  @media (min-width: 761px) { .control.wide { grid-column: span 2; } }
+  .rate-line { margin-top: 14px; font-size: 13px; color: var(--muted); }
+  .rate-line b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+
+  /* Verdict */
+  .verdict { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+  .verdict .main { border-left: 6px solid var(--v-color, var(--border)); padding-left: 16px; }
+  .big { font-size: 32px; font-weight: 700; line-height: 1.15; color: var(--v-color, var(--text)); }
+  .sub { color: var(--muted); margin-top: 4px; }
+  .meter { display: flex; gap: 4px; margin: 8px 0 6px; }
+  .meter i { flex: 1; height: 10px; border-radius: 3px; background: var(--surface-2); }
+  .meter i.on { background: var(--m-color, var(--ok)); }
+  .meter-label { font-weight: 700; font-size: 20px; }
+  .clash { margin-top: 14px; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-text); font-size: 14px; display: none; }
+  .clash.show { display: block; }
+
+  /* Readouts */
+  .readouts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .readout { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; min-width: 0; }
+  .readout .k { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+  .readout .v { font-size: 22px; font-weight: 700; margin: 4px 0 2px; overflow-wrap: anywhere; }
+  .readout .d { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  .readout .btn { margin-top: 8px; font-size: 13px; padding: 5px 10px; }
+
+  /* Spectrum */
+  .row { display: grid; grid-template-columns: 170px 1fr 150px; gap: 14px; align-items: center; padding: 10px 0; }
+  .row + .row { border-top: 1px solid var(--border); }
+  .row .name { font-weight: 600; }
+  .row .name small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; line-height: 1.35; }
+  .row.overall .name { font-size: 16px; }
+  .track { position: relative; height: 12px; border-radius: 6px; background: var(--track); }
+  .row.na .track { opacity: 0.25; }
+  .marker { position: absolute; top: 50%; width: 18px; height: 18px; border-radius: 50%; transform: translate(-50%, -50%);
+            background: var(--surface); border: 3px solid var(--text); transition: left 0.15s ease; }
+  .row.na .marker { display: none; }
+  .row.overall .marker { width: 22px; height: 22px; border-width: 4px; }
+  .row .time { font-family: var(--mono); font-size: 14px; text-align: right; }
+  .ticks { position: relative; height: 18px; margin: 4px 0 0; font-size: 11px; color: var(--muted); }
+  .ticks span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .scale { display: grid; grid-template-columns: 170px 1fr 150px; gap: 14px; }
+
+  /* Breakdown */
+  .pieces { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+  .piece { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface-2); min-width: 0; }
+  .piece code { font: 600 16px var(--mono); }
+  .piece div { font-size: 12px; color: var(--muted); }
+  .op { align-self: center; color: var(--muted); }
+  .empty { color: var(--muted); }
+
+  footer { font-size: 12px; color: var(--muted); margin-top: 24px; }
+  footer a { color: var(--accent); }
+
+  @media (max-width: 760px) {
+    .verdict { grid-template-columns: 1fr; }
+    .readouts { grid-template-columns: repeat(2, 1fr); }
+    .row, .scale { grid-template-columns: 1fr; gap: 6px; }
+    .row .time { text-align: left; }
+    .scale > :first-child, .scale > :last-child { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">COMP 435</div>
+  <h1>How strong is “strong”?</h1>
+  <p class="lead">Type a password. Each bar shows how long one attacker model needs to reach it under the threat model you pick. The overall verdict is the <b>weakest</b> of the three, because a real attacker uses whichever attack lands first.</p>
+
+  <section class="card">
+    <div class="pw-row">
+      <input id="pw" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Type a password" aria-label="Password to analyze">
+      <button class="btn" id="toggle" type="button" aria-pressed="false">Show</button>
+    </div>
+    <div class="examples" id="examples"><span>Try:</span></div>
+    <p class="privacy">Everything runs in this page. Nothing leaves your machine unless you press <b>Check breaches</b>, which sends only the first 5 characters of the password's SHA-1 hash (k-anonymity).</p>
+  </section>
+
+  <section class="card">
+    <h2>Threat model</h2>
+    <div class="controls">
+      <div class="control wide">
+        <label class="title">Where the attacker guesses</label>
+        <div class="seg" id="mode">
+          <button type="button" data-v="offline">Offline (stolen hashes)</button>
+          <button type="button" data-v="unthrottled">Online</button>
+          <button type="button" data-v="throttled">Online, rate-limited</button>
+        </div>
+        <div class="hint" id="mode-hint"></div>
+      </div>
+      <div class="control">
+        <label class="title" for="hash">Hash speed (algorithm)</label>
+        <select id="hash"></select>
+        <div class="hint" id="hash-hint"></div>
+      </div>
+      <div class="control">
+        <label class="title">Salt</label>
+        <div class="seg" id="salt">
+          <button type="button" data-v="0">Unsalted</button>
+          <button type="button" data-v="1">Salted</button>
+        </div>
+        <div class="hint" id="salt-hint"></div>
+      </div>
+      <div class="control">
+        <label class="title" for="accounts">Accounts in the stolen dump</label>
+        <select id="accounts">
+          <option value="1">1 (targeted at you)</option>
+          <option value="1000">1,000</option>
+          <option value="1000000">1,000,000</option>
+          <option value="100000000">100,000,000</option>
+        </select>
+        <div class="hint" id="accounts-hint"></div>
+      </div>
+      <div class="control">
+        <label class="title" for="gpus">Attacker hardware</label>
+        <select id="gpus">
+          <option value="1">1 GPU (RTX 4090)</option>
+          <option value="8">8 GPUs (cracking rig)</option>
+          <option value="1000">1,000 GPUs (rented cloud)</option>
+        </select>
+        <div class="hint" id="gpus-hint"></div>
+      </div>
+    </div>
+    <div class="rate-line" id="rate-line"></div>
+  </section>
+
+  <section class="card verdict">
+    <div class="main" id="v-main">
+      <h2>Realistic estimate</h2>
+      <div class="big" id="v-big">Type a password</div>
+      <div class="sub" id="v-sub">&nbsp;</div>
+    </div>
+    <div>
+      <h2>Conventional meter</h2>
+      <div class="meter" id="meter"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="meter-label" id="meter-label">&nbsp;</div>
+      <div class="sub">Points for length ≥ 8, length ≥ 12, mixed case, a digit, a symbol.</div>
+    </div>
+    <div class="clash" id="clash" style="grid-column: 1 / -1"></div>
+  </section>
+
+  <section class="readouts" style="margin-bottom:16px">
+    <div class="readout"><div class="k">Brute-force time</div><div class="v" id="r-bf">–</div><div class="d" id="r-bf-d">&nbsp;</div></div>
+    <div class="readout"><div class="k">Realistic guesses</div><div class="v" id="r-g">–</div><div class="d" id="r-g-d">&nbsp;</div></div>
+    <div class="readout"><div class="k">Commonness</div><div class="v" id="r-c">–</div><div class="d" id="r-c-d">&nbsp;</div></div>
+    <div class="readout"><div class="k">Breach presence</div><div class="v" id="r-b">Not checked</div><div class="d" id="r-b-d">Have I Been Pwned, opt-in</div>
+      <button class="btn" id="hibp" type="button">Check breaches</button></div>
+  </section>
+
+  <section class="card">
+    <h2>Time to crack, per attack model</h2>
+    <div id="rows"></div>
+    <div class="scale"><div></div><div class="ticks" id="ticks"></div><div></div></div>
+  </section>
+
+  <section class="card">
+    <h2>How the rule-based attacker builds it</h2>
+    <div class="pieces" id="pieces"><span class="empty">Type a password to see its structure.</span></div>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+
+<script src="wordlists.js"></script>
+<script src="estimator.js"></script>
+<script>
+(function () {
+  'use strict';
+  const E = window.Estimator;
+  E.init(window.WORDLISTS);
+
+  const $ = (id) => document.getElementById(id);
+  const state = Object.assign({}, E.DEFAULT_SCENARIO);
+  const MODELS = [
+    { key: 'bruteforce', name: 'Brute force', desc: 'every string over its character set, shortest first' },
+    { key: 'dictionary', name: 'Dictionary', desc: 'leaked-password list, most common first' },
+    { key: 'rules', name: 'Rule-based', desc: 'words + mangling, digits, years, patterns' },
+  ];
+  const MODEL_NAME = { bruteforce: 'brute force', dictionary: 'dictionary attack', rules: 'rule-based attack' };
+  const EXAMPLES = ['P@ssw0rd!', 'Summer2024!', 'iloveyou123', 'correcthorsebatterystaple', 'Xk9#mQ2$vL', 'blue-Otter-candle-91'];
+
+  // ---- build controls -------------------------------------------------------
+  for (const [k, h] of Object.entries(E.HASHES)) {
+    const o = document.createElement('option');
+    o.value = k; o.textContent = h.label; $('hash').appendChild(o);
+  }
+  $('hash').value = state.hash;
+  $('accounts').value = String(state.accounts);
+  $('gpus').value = String(state.gpus);
+
+  EXAMPLES.forEach((ex) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip'; b.textContent = ex;
+    b.addEventListener('click', () => { $('pw').value = ex; resetBreach(); render(); });
+    $('examples').appendChild(b);
+  });
+
+  $('rows').innerHTML = MODELS.map((m) => `
+    <div class="row" id="row-${m.key}">
+      <div class="name">${m.name}<small>${m.desc}</small></div>
+      <div class="track"><div class="marker"></div></div>
+      <div class="time">–</div>
+    </div>`).join('') + `
+    <div class="row overall" id="row-overall">
+      <div class="name">Overall<small>anchored by the worst case</small></div>
+      <div class="track"><div class="marker"></div></div>
+      <div class="time">–</div>
+    </div>`;
+
+  // Tick marks on the shared time axis (log scale, 1 second .. 100 years).
+  const TICKS = [[1, 'instant'], [60, '1 min'], [3600, '1 hour'], [86400, '1 day'], [31557600, '1 year'], [3155760000, '100 yr+']];
+  $('ticks').innerHTML = TICKS.map(([s, l]) => `<span style="left:${(E.safety(s) * 100).toFixed(1)}%">${l}</span>`).join('');
+
+  function bindSeg(id, onPick) {
+    $(id).addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b || b.disabled) return;
+      onPick(b.dataset.v);
+      render();
+    });
+  }
+  bindSeg('mode', (v) => { state.mode = v; });
+  bindSeg('salt', (v) => { state.salted = v === '1'; });
+  $('hash').addEventListener('change', (e) => { state.hash = e.target.value; render(); });
+  $('accounts').addEventListener('change', (e) => { state.accounts = +e.target.value; render(); });
+  $('gpus').addEventListener('change', (e) => { state.gpus = +e.target.value; render(); });
+  $('pw').addEventListener('input', () => { resetBreach(); render(); });
+  $('toggle').addEventListener('click', () => {
+    const show = $('pw').type === 'password';
+    $('pw').type = show ? 'text' : 'password';
+    $('toggle').textContent = show ? 'Hide' : 'Show';
+    $('toggle').setAttribute('aria-pressed', String(show));
+  });
+
+  function setSeg(id, value, disabledAll) {
+    $(id).querySelectorAll('button').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.v === value));
+      b.disabled = !!disabledAll;
+    });
+  }
+
+  // ---- colour ----------------------------------------------------------------
+  function riskColor(seconds) {
+    const t = E.safety(seconds);
+    return `hsl(${Math.round(t * 125)}, 68%, ${t > 0.45 && t < 0.7 ? 40 : 44}%)`;
+  }
+
+  const sci = (x) => {
+    if (x < 1000) return x < 1 ? x.toPrecision(2) : Math.round(x).toLocaleString('en-US');
+    const e = Math.floor(Math.log10(x));
+    return `${(x / Math.pow(10, e)).toFixed(1)} × 10^${e}`;
+  };
+
+  // ---- render ------------------------------------------------------------------
+  function renderControls(sc) {
+    const offline = state.mode === 'offline';
+    setSeg('mode', state.mode);
+    $('hash').disabled = !offline;
+    $('gpus').disabled = !offline;
+    const h = E.HASHES[state.hash];
+    const forced = h.salt !== 'choice';
+    setSeg('salt', sc.salted === null ? '' : sc.salted ? '1' : '0', !offline || forced);
+    $('accounts').disabled = !offline || !sc.salted;
+
+    $('mode-hint').textContent = offline ? 'Stolen hash database: no lockout applies'
+      : E.ONLINE[state.mode].note + ' against the live login';
+    $('hash-hint').textContent = offline ? (h.note || `${sci(h.rate)} guesses/s per GPU`) : 'Not used online: the server hashes';
+    $('salt-hint').textContent = !offline ? 'Not used online'
+      : h.salt === 'always' ? `${h.label.split(' ')[0]} always salts`
+      : h.salt === 'never' ? 'NTLM is never salted'
+      : sc.salted ? 'Each account must be attacked separately' : 'One guess tests every account; lookup tables work';
+    $('accounts-hint').textContent = offline && sc.salted ? 'Salt multiplies the work by this many accounts'
+      : offline ? 'Unsalted: size of the dump costs nothing extra' : 'Not used online';
+    $('gpus-hint').textContent = offline ? 'Speeds from hashcat benchmarks' : 'Not used online';
+    $('rate-line').innerHTML = `Attacker speed against <i>your</i> account: <b>${sci(sc.rate)} guesses/second</b> · ${sc.label}`;
+  }
+
+  function render() {
+    const pw = $('pw').value;
+    const sc = E.resolveScenario(state);
+    renderControls(sc);
+
+    if (!pw) { renderEmpty(); return; }
+    const est = E.estimate(pw);
+    const t = E.times(est, state);
+
+    // Verdict
+    const color = riskColor(t.overall.seconds);
+    $('v-main').style.setProperty('--v-color', color);
+    $('v-big').textContent = t.overall.lookup ? 'Cracked instantly' : `${E.verdict(t.overall.seconds)}`;
+    $('v-sub').textContent = (t.overall.lookup
+      ? 'Found by lookup table: unsalted hash of a password already in public lists'
+      : (t.overall.seconds >= 1 ? `${E.formatSeconds(t.overall.seconds)} · ` : '') + `${E.formatGuesses(est.overall.log10)} guesses`) +
+      ` · weakest link: ${MODEL_NAME[t.overall.weakest]}`;
+
+    // Conventional meter
+    const cm = est.conventional;
+    const mColor = cm.score >= 4 ? 'var(--ok)' : cm.score >= 2 ? '#f9a825' : 'var(--danger)';
+    $('meter').style.setProperty('--m-color', mColor);
+    $('meter').querySelectorAll('i').forEach((el, i) => el.classList.toggle('on', i < Math.max(cm.score, 1)));
+    $('meter-label').textContent = cm.label;
+    $('meter-label').style.color = mColor;
+    const clash = cm.score >= 3 && t.overall.seconds < 86400;
+    $('clash').classList.toggle('show', clash);
+    if (clash) {
+      $('clash').textContent = `The conventional meter rates this “${cm.label}”, but a ${MODEL_NAME[t.overall.weakest]} reaches it ` +
+        `in about ${E.formatGuesses(est.overall.log10)} guesses (${E.formatSeconds(t.overall.seconds)} under this threat model).`;
+    }
+
+    // Readouts
+    $('r-bf').textContent = E.formatSeconds(t.bruteforce.seconds);
+    $('r-bf-d').textContent = `${est.bruteforce.charset}-character set, length ${est.bruteforce.length} → ${E.formatGuesses(est.bruteforce.log10)} guesses`;
+    $('r-g').textContent = E.formatGuesses(est.overall.log10);
+    $('r-g-d').textContent = `minimum over 3 models (${MODEL_NAME[est.overall.weakest]})`;
+    const d = est.dictionary;
+    const base = est.rules.segments.find((s) => s.kind === 'word');
+    if (d.rank) {
+      $('r-c').textContent = `#${d.rank.toLocaleString('en-US')}`;
+      $('r-c-d').textContent = `of the ${d.listSize.toLocaleString('en-US')} most common leaked passwords`;
+    } else {
+      $('r-c').textContent = 'Not in list';
+      $('r-c-d').textContent = base && !est.rules.none ? `but built from ${base.label.replace(/ ×.*$/, '')}`
+        : `not among the ${d.listSize.toLocaleString('en-US')} most common`;
+    }
+
+    // Spectrum rows
+    MODELS.forEach((m) => {
+      const row = $(`row-${m.key}`);
+      const s = t[m.key].seconds;
+      const na = s === Infinity || (m.key === 'rules' && est.rules.none);
+      row.classList.toggle('na', na);
+      row.querySelector('.marker').style.left = `${(E.safety(s) * 100).toFixed(1)}%`;
+      row.querySelector('.time').textContent = m.key === 'dictionary' && s === Infinity ? 'not in list'
+        : m.key === 'rules' && est.rules.none ? 'no pattern found'
+        : t[m.key].lookup ? 'instantly (lookup)' : E.formatSeconds(s);
+    });
+    const ov = $('row-overall');
+    ov.querySelector('.marker').style.left = `${(E.safety(t.overall.seconds) * 100).toFixed(1)}%`;
+    ov.querySelector('.marker').style.borderColor = color;
+    ov.querySelector('.time').textContent = t.overall.lookup ? 'instantly (lookup)' : E.formatSeconds(t.overall.seconds);
+
+    // Breakdown
+    if (est.rules.none) {
+      $('pieces').innerHTML = '<span class="empty">No dictionary word, year, sequence or keyboard pattern found, so the rule-based attack has no shortcut. It falls back to brute force.</span>';
+    } else {
+      const parts = est.rules.segments.map((s) =>
+        `<div class="piece"><code>${esc(s.token)}</code><div>${esc(s.label)}</div><div>≈ ${E.formatGuesses(s.log10)} guesses${s.floored ? ' (minimum per piece)' : ''}</div></div>`);
+      const k = est.rules.orderFactor;
+      if (k > 1) parts.push(`<div class="piece"><code>${k}!</code><div>orderings of ${k} pieces</div><div>× ${factorial(k).toLocaleString('en-US')}</div></div>`);
+      $('pieces').innerHTML = parts.join('<span class="op">×</span>') +
+        `<span class="op">=</span><div class="piece"><code>${E.formatGuesses(est.rules.log10)}</code><div>guesses in total</div></div>`;
+    }
+  }
+
+  function renderEmpty() {
+    $('v-main').style.removeProperty('--v-color');
+    $('v-big').textContent = 'Type a password';
+    $('v-sub').innerHTML = '&nbsp;';
+    $('meter').querySelectorAll('i').forEach((el) => el.classList.remove('on'));
+    $('meter-label').innerHTML = '&nbsp;';
+    $('clash').classList.remove('show');
+    ['r-bf', 'r-g', 'r-c'].forEach((id) => { $(id).textContent = '–'; $(`${id}-d`).innerHTML = '&nbsp;'; });
+    [...MODELS.map((m) => `row-${m.key}`), 'row-overall'].forEach((id) => {
+      $(id).classList.add('na'); $(id).querySelector('.time').textContent = '–';
+    });
+    $('row-overall').classList.remove('na');
+    $('row-overall').querySelector('.marker').style.left = '0%';
+    $('pieces').innerHTML = '<span class="empty">Type a password to see its structure.</span>';
+  }
+
+  const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const factorial = (k) => (k <= 1 ? 1 : k * factorial(k - 1));
+
+  // ---- breach presence (Have I Been Pwned range API, k-anonymity) -------------
+  let breachSeq = 0;
+  function resetBreach() {
+    breachSeq++;
+    $('r-b').textContent = 'Not checked';
+    $('r-b-d').textContent = 'Have I Been Pwned, opt-in';
+  }
+  $('hibp').addEventListener('click', async () => {
+    const pw = $('pw').value;
+    if (!pw) return;
+    const seq = ++breachSeq;
+    $('r-b').textContent = 'Checking…';
+    try {
+      if (!window.crypto || !crypto.subtle) throw new Error('needs https or localhost');
+      const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(pw));
+      const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+      const res = await fetch(`https://api.pwnedpasswords.com/range/${hex.slice(0, 5)}`, { headers: { 'Add-Padding': 'true' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.text();
+      let count = 0;
+      for (const line of body.split('\n')) {
+        const [suffix, n] = line.trim().split(':');
+        if (suffix === hex.slice(5)) { count = parseInt(n, 10); break; }
+      }
+      if (seq !== breachSeq) return;
+      $('r-b').textContent = count > 0 ? `${count.toLocaleString('en-US')}×` : 'Not found';
+      $('r-b-d').textContent = count > 0 ? 'times seen in breach corpora (HIBP)' : 'not in HIBP Pwned Passwords';
+    } catch (err) {
+      if (seq !== breachSeq) return;
+      $('r-b').textContent = 'Unavailable';
+      $('r-b-d').textContent = String(err.message || err);
+    }
+  });
+
+  // ---- footer -------------------------------------------------------------------
+  const src = window.WORDLISTS.sources;
+  $('footer').innerHTML = `Dictionary: <a href="${src.passwords.url}">${src.passwords.name}</a>. Base words also from
+    <a href="${src.english.url}">${src.english.name}</a>. Offline speeds: one RTX 4090,
+    <a href="https://gist.github.com/Chick3nman/32e662a5bb63bc4f51b847bb422222fd">hashcat v6.2.6 benchmark</a>; iterated hashes scaled to the
+    cost shown. Online speeds follow zxcvbn's scenarios. Rule model inspired by PCFG (Weir et al., IEEE S&amp;P 2009) and zxcvbn
+    (Wheeler, USENIX Security 2016). Estimates are upper bounds on attacker effort for these models only.`;
+
+  render();
+})();
+</script>
+</body>
+</html>
